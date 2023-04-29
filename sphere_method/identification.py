@@ -46,6 +46,13 @@ def get_starting_points(img):
     return starting_points
 
 
+def get_sphere_points(center, radius):
+    size = np.max(center) + 2*radius
+    x, y, z = np.meshgrid(np.arange(size), np.arange(size), np.arange(size))
+    d = np.sqrt((x-center[0])**2 + (y-center[1])**2 + (z-center[2])**2)
+    surface_points = np.argwhere(np.isclose(d, radius))
+    return [tuple(point) for point in surface_points]
+
 def get_points_of_interest(point, radius, visited, edt_img):
     """Get list of points that can be on the vessel centerline. The method utilizes local maxima
     to find the centerline on the basis of the EDT image of the vessel. The returned points are
@@ -61,7 +68,9 @@ def get_points_of_interest(point, radius, visited, edt_img):
         list: A list of points that can be on the vessel centerline.
     """
     # get points on circle circumference
-    circle_points = circle_perimeter(*point, radius=radius, method="andres")
+    #circle_points = circle_perimeter(*point, radius=radius, method="andres")
+    circle_points = get_sphere_points(point, radius)
+
     # create image with edt values of point on circle circumference
     helper = np.zeros_like(edt_img)
     helper[circle_points] = edt_img[circle_points]
@@ -78,6 +87,13 @@ def get_points_of_interest(point, radius, visited, edt_img):
     points_of_interest.sort(key=lambda x: edt_img[x], reverse=True)
     return points_of_interest
 
+
+def get_disk_3d(center, radius):
+    size = np.max(center) + 2*radius
+    x, y, z = np.meshgrid(np.arange(size), np.arange(size), np.arange(size))
+    d = np.sqrt((x-center[0])**2 + (y-center[1])**2 + (z-center[2])**2)
+    surface_points = np.argwhere(d <= radius)
+    return [tuple(point) for point in surface_points]
 
 def get_vessel_graph(seg_img):
     """Produce a graph which describes the vessel structure.
@@ -129,7 +145,8 @@ def get_vessel_graph(seg_img):
                     points_to_examine.append(poi)
                     vessel_graph.add_edge(point, poi)
             # remove potential centreline pixels next to analyzed point to prevent going backwards
-            disk_points = disk(point, radius)
+            #disk_points = disk(point, radius)
+            disk_points = get_disk_3d(point, radius)
             visited[disk_points] = True
 
     return vessel_graph.to_undirected()
@@ -209,6 +226,67 @@ def connect_endings(graph, edt_img, multiplier=2.5):
                     ):
                         visited.append(new_point)
                         points.put(new_point)
+
+    return graph
+
+# pylint: disable=too-many-boolean-expressions,invalid-name
+def connect_endings_3d(graph, edt_img, multiplier=2.5):
+    """Fix discontinuities in vessel graph.
+
+    Args:
+        graph (nx.Graph): Graph object from NetworkX library.
+        edt_img (np.array): Numpy array containing euclidean distance transformed image of vessel.
+        multiplier (int, optional): Multiplier for maximum distance between nodes to connect.
+        Defaults to 2.
+
+    Returns:
+        nx.Graph: Graph without discontinuities.
+    """
+    # find potential discontinuities
+    endings = [node for node, degree in graph.degree() if degree == 1]
+    # for every ending run BFS connection search
+    while endings:
+        # get point to find connection for
+        start = endings.pop()
+        # calculate search area
+        r = edt_img[start] * multiplier
+        search_area = int(4/3 * r * r * r * np.pi)
+        # setup BFS
+        points = SimpleQueue()
+        points.put(start)
+        visited = []
+        # run BFS on a restricted area
+        while not points.empty() and search_area:
+            search_area -= 1
+            # get point
+            x, y, z = points.get()
+            visited.append((x, y, z))
+
+            # check if point is a node and is a valid connection
+            if graph.has_node((x, y, z)) and not nx.has_path(graph, start, (x, y, z)):
+                graph.add_edge(start, (x, y, z))
+                # this is to prevent accidentally creating bifurcations
+                if (x, y, z) in endings:
+                    endings.pop(endings.index((x, y, z)))
+                break
+
+            # add point to search if it is in segmentation mask and it is not visited
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    for dz in range(-1, 2):
+                        new_point = (x + dx, y + dy, z + dz)
+                        if (
+                            x + dx >= 0
+                            and x + dx < edt_img.shape[0]
+                            and y + dy >= 0
+                            and y + dy < edt_img.shape[1]
+                            and z + dz >= 0
+                            and z + dz < edt_img.shape[2]
+                            and new_point not in visited
+                            and edt_img[x + dx, y + dy] > 0
+                        ):
+                            visited.append(new_point)
+                            points.put(new_point)
 
     return graph
 
@@ -471,8 +549,11 @@ def get_data_graph(seg_img):
     """
     edt_img = distance_transform_edt(seg_img)
     vessel_graph = get_vessel_graph(seg_img)
+    print(nx.info(vessel_graph))
     vessel_graph = remove_graph_components(vessel_graph)
-    vessel_graph = connect_endings(vessel_graph, edt_img)
+    print(nx.info(vessel_graph))
+    vessel_graph = connect_endings_3d(vessel_graph, edt_img)
+    print(nx.info(vessel_graph))
     data_graph = parametrize_graph(vessel_graph, edt_img)
     data_graph = clean_data_graph(data_graph)
     return data_graph
