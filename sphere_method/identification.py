@@ -1,7 +1,3 @@
-"""This module contains functions necessary for the identification of vessel branches."""
-# pylint: disable=import-error
-
-
 from queue import SimpleQueue
 
 import numpy as np
@@ -46,12 +42,52 @@ def get_starting_points(img):
     return starting_points
 
 
-def get_sphere_points(center, radius):
-    size = np.max(center) + 2*radius
+def get_sphere_points(center, radius, im_size):
+    size = np.min([np.max(center) + 2*radius -1, im_size[0]-1, im_size[1]-1, im_size[2]-1])
     x, y, z = np.meshgrid(np.arange(size), np.arange(size), np.arange(size))
     d = np.sqrt((x-center[0])**2 + (y-center[1])**2 + (z-center[2])**2)
     surface_points = np.argwhere(np.isclose(d, radius))
     return [tuple(point) for point in surface_points]
+
+def sphere_perimeter(coords, radius, shape):
+    # Create arrays of indices for each dimension
+    x_indices = np.arange(shape[0])
+    y_indices = np.arange(shape[1])
+    z_indices = np.arange(shape[2])
+    
+    # Create a 3D grid of indices for each dimension
+    x_grid, y_grid, z_grid = np.meshgrid(x_indices, y_indices, z_indices, indexing='ij')
+    
+    # Calculate the distance of each point from the center
+    distances = np.sqrt((x_grid - coords[0])**2 + (y_grid - coords[1])**2 + (z_grid - coords[2])**2)
+    
+    # Find the indices of points that are on the sphere surface
+    sphere_indices = np.where(np.isclose(distances, radius))
+    
+    return sphere_indices
+
+def sphere_full(coords, radius, shape):
+    # Create arrays of indices for each dimension
+    x_indices = np.arange(shape[0]-1)
+    y_indices = np.arange(shape[1]-1)
+    z_indices = np.arange(shape[2]-1)
+    
+    # Create a 3D grid of indices for each dimension
+    x_grid, y_grid, z_grid = np.meshgrid(x_indices, y_indices, z_indices, indexing='ij')
+    
+    # Calculate the distance of each point from the center
+    distances = np.sqrt((x_grid - coords[0])**2 + (y_grid - coords[1])**2 + (z_grid - coords[2])**2)
+    
+    sphere_indices = np.where(distances <= radius)
+    
+    # Create a binary mask with True values at the indices of points on the sphere surface
+    mask = np.zeros(shape, dtype=bool)
+    mask[sphere_indices] = True
+    
+    return mask
+
+def is_inside_image(p, shape):
+    return p[0] > 0 and p[1] > 0 and p[2] > 0 and p[0] > shape[0] and p[1] > shape[1] and p[2] > shape[2]
 
 def get_points_of_interest(point, radius, visited, edt_img):
     """Get list of points that can be on the vessel centerline. The method utilizes local maxima
@@ -69,8 +105,8 @@ def get_points_of_interest(point, radius, visited, edt_img):
     """
     # get points on circle circumference
     #circle_points = circle_perimeter(*point, radius=radius, method="andres")
-    circle_points = get_sphere_points(point, radius)
-
+    circle_points = sphere_perimeter(point, radius, edt_img.shape)
+    #print("Circle points: ", len(circle_points), edt_img.shape)
     # create image with edt values of point on circle circumference
     helper = np.zeros_like(edt_img)
     helper[circle_points] = edt_img[circle_points]
@@ -78,11 +114,13 @@ def get_points_of_interest(point, radius, visited, edt_img):
     coords = peak_local_max(
         helper, min_distance=radius // 3, threshold_abs=2, threshold_rel=0.5
     )
+    #print("Local peaks on surface: ", len(coords))
     # find coordinates of local maxima
     helper[circle_points] = 0
     helper[tuple(coords.T)] = 1
     helper[visited] = 0
     points_of_interest = list(zip(*np.nonzero(helper)))
+    points_of_interest = list(filter(lambda x: is_inside_image(x, edt_img.shape), points_of_interest))
     # sort points by vessel diameter
     points_of_interest.sort(key=lambda x: edt_img[x], reverse=True)
     return points_of_interest
@@ -95,6 +133,13 @@ def get_disk_3d(center, radius):
     surface_points = np.argwhere(d <= radius)
     return [tuple(point) for point in surface_points]
 
+def generate_sphere(radius):
+    large = ball(radius)
+    small = ball(np.maximum(1, radius-1))
+    padded_small = np.pad(small, 1, mode='constant')
+    sphere = large - padded_small
+    return sphere
+
 def get_vessel_graph(seg_img):
     """Produce a graph which describes the vessel structure.
 
@@ -106,14 +151,19 @@ def get_vessel_graph(seg_img):
     """
     # perform euclidean distance transform on base image
     edt_img = distance_transform_edt(seg_img)
+    print("EDT transform completed")
     # get starting points
     starting_point_stack = get_starting_points(edt_img)
+    print("Finding starting points completed")
+
     # create vessel tree data structure
     vessel_graph = nx.DiGraph()
     # create array for holding information on visited pixels
     visited = np.zeros_like(edt_img).astype(bool)
+    i = 0
 
     while starting_point_stack:
+        i+=1
         # select new starting point and check if it was not visited already
         starting_point = starting_point_stack.pop()
         if visited[starting_point]:
@@ -121,32 +171,41 @@ def get_vessel_graph(seg_img):
 
         vessel_graph.add_node(starting_point)
         points_to_examine = [starting_point]
-
+        if i % 10 == 0:
+            print("Step i", i, len(starting_point_stack))
+        j = 0
         while points_to_examine:
+            j += 1
+            if j % 100 == 0:
+                print("Step: ", i, "-", j, " Points to examine: ", len(points_to_examine))
             # get point from queue
             point = points_to_examine.pop()
             # calculate vessel radius
             radius = int(edt_img[point])
             # if radius is too small, don't go further into this vessel
             # also limited by min_distance having to be >= 1 in peak_local_max
-            if radius <= 2:
+            if radius <= 1:
                 continue
             # get points that can be on centreline
             points_of_interest = get_points_of_interest(point, radius, visited, edt_img)
+                
             # eliminate points that are too close to each other
             for poi_1 in points_of_interest:
                 for poi_2 in points_of_interest:
                     if poi_1 != poi_2 and euclidean(poi_1, poi_2) < edt_img[poi_1]:
                         points_of_interest.pop(points_of_interest.index(poi_2))
+
             # add points of interest to examination list and to vessel graph
+
             for poi in points_of_interest:
                 # avoid node duplication
                 if not (poi in points_to_examine or vessel_graph.has_node(poi)):
                     points_to_examine.append(poi)
                     vessel_graph.add_edge(point, poi)
+                    
             # remove potential centreline pixels next to analyzed point to prevent going backwards
-            #disk_points = disk(point, radius)
-            disk_points = get_disk_3d(point, radius)
+            disk_points = sphere_full(point, radius, visited.shape)
+
             visited[disk_points] = True
 
     return vessel_graph.to_undirected()
@@ -165,14 +224,14 @@ def remove_graph_components(graph):
     components = list(nx.connected_components(graph))
     # remove small components
     for component in components:
-        if len(component) < 4:
+        if len(component) < 2:
             for node in component:
                 graph.remove_node(node)
     return graph
 
 
 # pylint: disable=too-many-boolean-expressions,invalid-name
-def connect_endings(graph, edt_img, multiplier=2.5):
+def connect_endings(graph, edt_img, multiplier=2.):
     """Fix discontinuities in vessel graph.
 
     Args:
@@ -229,8 +288,34 @@ def connect_endings(graph, edt_img, multiplier=2.5):
 
     return graph
 
+def connect_endings_mst(graph, edt_image, multiplier=10):
+    nodes = list(graph.nodes())
+    n = len(nodes)
+    
+    G = nx.Graph()
+    G.add_nodes_from(nodes)
+
+    for i in range(n):
+        for j in range(i+1, n):
+            d = euclidean(nodes[i], nodes[j]) 
+            d_thresh = np.maximum(edt_image[nodes[i]], edt_image[nodes[j]]) * multiplier
+            if d <= d_thresh:
+                G.add_edge(nodes[i], nodes[j], weight=d)
+    return nx.minimum_spanning_tree(G)
+
+
+def sorted_nodes_by_distance(graph, node):
+    distances = {}
+    for n in list(graph.nodes):
+        if n == node:
+            continue
+        dist = euclidean(node, n)
+        distances[n] = dist
+    sorted_nodes = sorted(distances, key=distances.get)
+    return sorted_nodes
+    
 # pylint: disable=too-many-boolean-expressions,invalid-name
-def connect_endings_3d(graph, edt_img, multiplier=2.5):
+def connect_endings_3d(graph, edt_img, multiplier=3.):
     """Fix discontinuities in vessel graph.
 
     Args:
@@ -243,7 +328,13 @@ def connect_endings_3d(graph, edt_img, multiplier=2.5):
         nx.Graph: Graph without discontinuities.
     """
     # find potential discontinuities
-    endings = [node for node, degree in graph.degree() if degree == 1]
+    endings = [node for node, degree in graph.degree() if degree <= 1]
+    root = np.unravel_index(np.argmax(edt_img), edt_img.shape)
+    
+    if root not in graph.nodes:
+        graph.add_node(root)
+        
+    print("Endings: ", len(endings))
     # for every ending run BFS connection search
     while endings:
         # get point to find connection for
@@ -254,39 +345,58 @@ def connect_endings_3d(graph, edt_img, multiplier=2.5):
         # setup BFS
         points = SimpleQueue()
         points.put(start)
-        visited = []
+        visited = np.zeros_like(edt_img).astype(bool)
+
         # run BFS on a restricted area
-        while not points.empty() and search_area:
-            search_area -= 1
-            # get point
-            x, y, z = points.get()
-            visited.append((x, y, z))
+        i = 0
 
-            # check if point is a node and is a valid connection
-            if graph.has_node((x, y, z)) and not nx.has_path(graph, start, (x, y, z)):
-                graph.add_edge(start, (x, y, z))
-                # this is to prevent accidentally creating bifurcations
-                if (x, y, z) in endings:
-                    endings.pop(endings.index((x, y, z)))
+        to_visit = sorted_nodes_by_distance(graph, start)
+        print("Endings: ", len(endings))
+
+        while i < len(to_visit):
+            if nx.has_path(graph, root, start) or euclidean(start, to_visit[i]) > edt_img[start] * multiplier:
                 break
+            curr = to_visit[i]
+            i += 1
+            if not nx.has_path(graph, start, curr) and curr != start:
+                graph.add_edge(start, curr)
+                if curr in endings:
+                    endings.pop(endings.index(curr))
+                break
+#         while not points.empty() and search_area:            
+#             if i % 100 == 0:
+#                 print("Points: ", points.qsize(), len(endings))
+#             i += 1
+#             search_area -= 1
+#             # get point
+#             x, y, z = points.get()
+#             visited[x, y, z] = True
 
-            # add point to search if it is in segmentation mask and it is not visited
-            for dx in range(-1, 2):
-                for dy in range(-1, 2):
-                    for dz in range(-1, 2):
-                        new_point = (x + dx, y + dy, z + dz)
-                        if (
-                            x + dx >= 0
-                            and x + dx < edt_img.shape[0]
-                            and y + dy >= 0
-                            and y + dy < edt_img.shape[1]
-                            and z + dz >= 0
-                            and z + dz < edt_img.shape[2]
-                            and new_point not in visited
-                            and edt_img[x + dx, y + dy] > 0
-                        ):
-                            visited.append(new_point)
-                            points.put(new_point)
+#             # check if point is a node and is a valid connection
+#             if graph.has_node((x, y, z)) and not nx.has_path(graph, start, (x, y, z)):
+#                 graph.add_edge(start, (x, y, z))
+#                 # this is to prevent accidentally creating bifurcations
+#                 if (x, y, z) in endings:
+#                     endings.pop(endings.index((x, y, z)))
+#                 break
+
+#             # add point to search if it is in segmentation mask and it is not visited
+#             for dx in range(-1, 2):
+#                 for dy in range(-1, 2):
+#                     for dz in range(-1, 2):
+#                         new_point = (x + dx, y + dy, z + dz)
+#                         if (
+#                             x + dx >= 0
+#                             and x + dx < edt_img.shape[0]
+#                             and y + dy >= 0
+#                             and y + dy < edt_img.shape[1]
+#                             and z + dz >= 0
+#                             and z + dz < edt_img.shape[2]
+#                             and not visited[new_point]
+#                             and edt_img[x + dx, y + dy, z + dz] > 0
+#                         ):
+#                             visited[new_point] = True
+#                             points.put(new_point)
 
     return graph
 

@@ -314,3 +314,23 @@ class ColorMapVisualizer:
                 volume_color.AddRGBPoint(i, *(colors[i % len(colors)]))
                 
         return volume_color
+
+def draw_graph_on_model(binary_model, graph):
+    mask = np.zeros(binary_model.shape, dtype=np.uint8)
+    mask[binary_model] = 30
+
+
+    for edge in graph.edges:
+        node1, node2 = edge
+        x1, y1, z1 = node1
+        x2, y2, z2 = node2
+        line_x = np.linspace(x1, x2, num=300, endpoint=True, dtype=np.int32)
+        line_y = np.linspace(y1, y2, num=300, endpoint=True, dtype=np.int32)
+        line_z = np.linspace(z1, z2, num=300, endpoint=True, dtype=np.int32)
+        for i in range(len(line_x)):
+            mask[line_x[i], line_y[i], line_z[i]] = 255
+
+    for node in graph.nodes:
+        x, y, z = node
+        mask[x, y, z] = 40
+    return mask
