@@ -5,8 +5,10 @@ import networkx as nx
 
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial.distance import euclidean
+
 from skimage.draw import circle_perimeter, disk
 from skimage.feature import peak_local_max
+from skimage.morphology import ball
 
 
 PROJECTION_ANGLES = {
@@ -86,8 +88,37 @@ def sphere_full(coords, radius, shape):
     
     return mask
 
+
+def get_disk_3d(center, radius):
+    size = np.max(center) + 2*radius
+    x, y, z = np.meshgrid(np.arange(size), np.arange(size), np.arange(size))
+    d = np.sqrt((x-center[0])**2 + (y-center[1])**2 + (z-center[2])**2)
+    surface_points = np.argwhere(d <= radius)
+    return [tuple(point) for point in surface_points]
+
 def is_inside_image(p, shape):
-    return p[0] > 0 and p[1] > 0 and p[2] > 0 and p[0] > shape[0] and p[1] > shape[1] and p[2] > shape[2]
+    return p[0] >= 0 and p[1] >= 0 and p[2] >= 0 and p[0] < shape[0] and p[1] < shape[1] and p[2] < shape[2]
+
+def generate_sphere(radius):
+    large = ball(radius)
+    small = ball(np.maximum(1, radius-1))
+    padded_small = np.pad(small, 1, mode='constant')
+    sphere = large - padded_small
+    return sphere
+
+def get_points_on_sphere(center, r):
+    b = generate_sphere(r)
+    non_zero = np.array(tuple(zip(*np.nonzero(b))))
+    new_points = []
+
+    for point in non_zero:
+        x,y,z = point[0], point[1], point[2]
+        xc, yc, zc = center
+
+        x,y,z = x-r, y-r, z-r
+        x,y,z = x + xc, y + yc, z + zc
+        new_points.append((x,y,z))
+    return new_points
 
 def get_points_of_interest(point, radius, visited, edt_img):
     """Get list of points that can be on the vessel centerline. The method utilizes local maxima
@@ -104,43 +135,34 @@ def get_points_of_interest(point, radius, visited, edt_img):
         list: A list of points that can be on the vessel centerline.
     """
     # get points on circle circumference
-    #circle_points = circle_perimeter(*point, radius=radius, method="andres")
-    circle_points = sphere_perimeter(point, radius, edt_img.shape)
-    #print("Circle points: ", len(circle_points), edt_img.shape)
+    circle_points = get_points_on_sphere(point, radius)
+    circle_points = list(filter(lambda x: is_inside_image(x, edt_img.shape), circle_points))
+
     # create image with edt values of point on circle circumference
     helper = np.zeros_like(edt_img)
-    helper[circle_points] = edt_img[circle_points]
+    
+    for p in circle_points:
+        helper[p] = edt_img[p]
+        
     # find local maxima
     coords = peak_local_max(
         helper, min_distance=radius // 3, threshold_abs=2, threshold_rel=0.5
     )
-    #print("Local peaks on surface: ", len(coords))
-    # find coordinates of local maxima
-    helper[circle_points] = 0
+
+    # find coordinates of local 
+    for p in circle_points:
+        helper[p] = 0
     helper[tuple(coords.T)] = 1
     helper[visited] = 0
     points_of_interest = list(zip(*np.nonzero(helper)))
+    
     points_of_interest = list(filter(lambda x: is_inside_image(x, edt_img.shape), points_of_interest))
     # sort points by vessel diameter
     points_of_interest.sort(key=lambda x: edt_img[x], reverse=True)
     return points_of_interest
 
 
-def get_disk_3d(center, radius):
-    size = np.max(center) + 2*radius
-    x, y, z = np.meshgrid(np.arange(size), np.arange(size), np.arange(size))
-    d = np.sqrt((x-center[0])**2 + (y-center[1])**2 + (z-center[2])**2)
-    surface_points = np.argwhere(d <= radius)
-    return [tuple(point) for point in surface_points]
-
-def generate_sphere(radius):
-    large = ball(radius)
-    small = ball(np.maximum(1, radius-1))
-    padded_small = np.pad(small, 1, mode='constant')
-    sphere = large - padded_small
-    return sphere
-
-def get_vessel_graph(seg_img):
+def get_vessel_graph(seg_img, multiplier=1):
     """Produce a graph which describes the vessel structure.
 
     Args:
@@ -151,19 +173,16 @@ def get_vessel_graph(seg_img):
     """
     # perform euclidean distance transform on base image
     edt_img = distance_transform_edt(seg_img)
-    print("EDT transform completed")
     # get starting points
     starting_point_stack = get_starting_points(edt_img)
-    print("Finding starting points completed")
-
     # create vessel tree data structure
     vessel_graph = nx.DiGraph()
     # create array for holding information on visited pixels
     visited = np.zeros_like(edt_img).astype(bool)
+    
     i = 0
-
+    print("Starting points: ", len(starting_point_stack))
     while starting_point_stack:
-        i+=1
         # select new starting point and check if it was not visited already
         starting_point = starting_point_stack.pop()
         if visited[starting_point]:
@@ -171,13 +190,11 @@ def get_vessel_graph(seg_img):
 
         vessel_graph.add_node(starting_point)
         points_to_examine = [starting_point]
-        if i % 10 == 0:
-            print("Step i", i, len(starting_point_stack))
+        
         j = 0
         while points_to_examine:
-            j += 1
-            if j % 100 == 0:
-                print("Step: ", i, "-", j, " Points to examine: ", len(points_to_examine))
+            if j % 10 == 0:
+                print(f"i: {i} j: {j} {len(points_to_examine)}")
             # get point from queue
             point = points_to_examine.pop()
             # calculate vessel radius
@@ -187,26 +204,24 @@ def get_vessel_graph(seg_img):
             if radius <= 1:
                 continue
             # get points that can be on centreline
-            points_of_interest = get_points_of_interest(point, radius, visited, edt_img)
-                
+            points_of_interest = get_points_of_interest(point, multiplier*radius, visited, edt_img)
+
             # eliminate points that are too close to each other
             for poi_1 in points_of_interest:
                 for poi_2 in points_of_interest:
                     if poi_1 != poi_2 and euclidean(poi_1, poi_2) < edt_img[poi_1]:
                         points_of_interest.pop(points_of_interest.index(poi_2))
-
             # add points of interest to examination list and to vessel graph
-
             for poi in points_of_interest:
                 # avoid node duplication
                 if not (poi in points_to_examine or vessel_graph.has_node(poi)):
                     points_to_examine.append(poi)
                     vessel_graph.add_edge(point, poi)
-                    
             # remove potential centreline pixels next to analyzed point to prevent going backwards
             disk_points = sphere_full(point, radius, visited.shape)
-
             visited[disk_points] = True
+            j += 1
+        i += 1
 
     return vessel_graph.to_undirected()
 
