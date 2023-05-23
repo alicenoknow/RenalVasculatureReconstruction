@@ -1,0 +1,126 @@
+MODEL_01
+
+Dice coefficient: 0.9588826815642458
+
+Hausdorff distance: (2.23606797749979, 4495, 3840)
+
+Precission: 0.9210130929383988
+Accuracy: 0.9958698092031425
+Confussion matrix: 
+[[168882    736]
+ [     0   8582]]
+
+ ################################### 
+
+MODEL_02
+
+Dice coefficient: 0.9619980744180778
+
+Hausdorff distance: (2.0, 4666, 4279)
+
+Precission: 0.926778699257966
+Accuracy: 0.9962345679012345
+Confussion matrix: 
+[[169036    671]
+ [     0   8493]]
+
+ ################################### 
+
+MODEL_03
+
+Dice coefficient: 0.9657228017883756
+
+Hausdorff distance: (2.0, 4361, 4099)
+
+Precission: 0.9337175792507204
+Accuracy: 0.9966442199775533
+Confussion matrix: 
+[[169178    598]
+ [     0   8424]]
+
+ ################################### 
+
+MODEL_04
+
+Dice coefficient: 0.9617851560394546
+
+Hausdorff distance: (2.23606797749979, 4720, 4037)
+
+Precission: 0.9263835531097497
+Accuracy: 0.996266927823761
+Confussion matrix: 
+[[180293    709]
+ [     0   8922]]
+
+ ################################### 
+
+MODEL_14
+
+Dice coefficient: 0.9702903695952764
+
+Hausdorff distance: (2.0, 6720, 6338)
+
+Precission: 0.9422951295637657
+Accuracy: 0.997985260725002
+Confussion matrix: 
+[[380815    795]
+ [     0  12982]]
+
+ ################################### 
+
+MODEL_15
+
+Dice coefficient: 0.9722876015488573
+
+Hausdorff distance: (2.0, 6559, 6234)
+
+Precission: 0.9460697399527187
+Accuracy: 0.9981499878355364
+Confussion matrix: 
+[[381056    730]
+ [     0  12806]]
+
+ ################################### 
+
+MODEL_16
+
+Dice coefficient: 0.9710808983700143
+
+Hausdorff distance: (2.23606797749979, 6715, 6553)
+
+Precission: 0.9437874142210542
+Accuracy: 0.9981718898385565
+Confussion matrix: 
+[[407502    770]
+ [     0  12928]]
+
+ ################################### 
+
+MODEL_17
+
+Dice coefficient: 0.9735009085402786
+
+Hausdorff distance: (3.1622776601683795, 10018, 10283)
+
+Precission: 0.9486498450641877
+Accuracy: 0.998338081671415
+Confussion matrix: 
+[[407642    696]
+ [     4  12858]]
+
+ ################################### 
+
+MODEL_18
+
+Dice coefficient: 0.9752186588921283
+
+Hausdorff distance: (5.0, 6653, 7039)
+
+Precission: 0.9529200089961766
+Accuracy: 0.9984662867996201
+Confussion matrix: 
+[[407843    628]
+ [    18  12711]]
+
+ ################################### 
+
