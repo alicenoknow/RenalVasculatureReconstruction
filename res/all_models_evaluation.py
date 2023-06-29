@@ -150,7 +150,7 @@ def calculate_reconstruction(mask, kernel_sizes=[10, 9, 8], fill_threshold=0.5, 
 def reconstruct_with_finetuning(filename, tree_name):
     
     if filename[-3:] == 'raw':
-        volume = load_volume(filename='../data/' + tree_name + '/' + filename)
+        volume = load_volume(filename)
     else:
         volume = np.load(filename)
     
@@ -196,9 +196,16 @@ def reconstruct_with_finetuning(filename, tree_name):
 if __name__ == '__main__':
     dir_path = '../data/P*'
     files = glob.glob(dir_path + '/P*.raw')
-    files = sorted(files)[11:]
-    print(files)
-    report = ''
+    files = sorted(files)
+    for file in files:
+        tree_name =  file.split('\\')[-2][:3]
+        print(tree_name)
+        print('##################')
+        original, recons = reconstruct_with_finetuning(file, tree_name)
+        
+    dir_path = '../data/M*'
+    files = glob.glob(dir_path + '/M*.npy')
+    files = sorted(files)
     for file in files:
         tree_name =  file.split('\\')[-2][:3]
         print(tree_name)
